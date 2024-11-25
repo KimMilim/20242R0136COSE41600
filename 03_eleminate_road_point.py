@@ -10,17 +10,33 @@ file_path = "test_data/1727320101-665925967.pcd"
 original_pcd = o3d.io.read_point_cloud(file_path)
 
 # Voxel Downsampling 수행
-voxel_size = 0.4  # 필요에 따라 voxel 크기를 조정
+voxel_size = 0.2  # 필요에 따라 voxel 크기를 조정
 downsample_pcd = original_pcd.voxel_down_sample(voxel_size=voxel_size)
 
+
+# 밀도 기반으로 SOR 및 ROR 매개변수 동적 설정
+avg_density = len(original_pcd.points) / original_pcd.get_axis_aligned_bounding_box().volume()
+
+# SOR 매개변수 조정
+sor_nb_neighbors = max(10, int(avg_density * 5))
+sor_std_ratio = 1.0 if avg_density > 0.1 else 0.8
+
+# ROR 매개변수 조정
+ror_nb_points = max(5, int(avg_density * 3))
+ror_radius = 1.0 if avg_density > 0.1 else 0.8
+
+# Statistical Outlier Removal (SOR) 적용
+cl, ind = downsample_pcd.remove_statistical_outlier(nb_neighbors=sor_nb_neighbors, std_ratio=sor_std_ratio)
+sor_pcd = downsample_pcd.select_by_index(ind)
+
 # Radius Outlier Removal (ROR) 적용
-cl, ind = downsample_pcd.remove_radius_outlier(nb_points=6, radius=1.2)
-ror_pcd = downsample_pcd.select_by_index(ind)
+cl, ind = sor_pcd.remove_radius_outlier(nb_points=ror_nb_points, radius=ror_radius)
+ror_pcd = sor_pcd.select_by_index(ind)
 
 # RANSAC을 사용하여 평면 추정
-plane_model, inliers = ror_pcd.segment_plane(distance_threshold=0.1,
+plane_model, inliers = ror_pcd.segment_plane(distance_threshold=0.25,
                                              ransac_n=3,
-                                             num_iterations=2000)
+                                             num_iterations=1000)
 
 [a, b, c, d] = plane_model
 print(f"Plane equation: {a:.2f}x + {b:.2f}y + {c:.2f}z + {d:.2f} = 0")

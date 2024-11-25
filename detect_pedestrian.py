@@ -30,12 +30,23 @@ for file_path in pcd_files:
     # Voxel Downsampling
     downsample_pcd = original_pcd.voxel_down_sample(voxel_size=voxel_size)
     
+    # 밀도 기반으로 SOR 및 ROR 매개변수 동적 설정
+    avg_density = len(original_pcd.points) / original_pcd.get_axis_aligned_bounding_box().volume()
+
+    # SOR 매개변수 조정
+    sor_nb_neighbors = max(10, int(avg_density * 5))
+    sor_std_ratio = 1.0 if avg_density > 0.1 else 0.8
+
+    # ROR 매개변수 조정
+    ror_nb_points = max(5, int(avg_density * 3))
+    ror_radius = 1.0 if avg_density > 0.1 else 0.8
+
     # Statistical Outlier Removal (SOR) 적용
-    cl, ind = downsample_pcd.remove_statistical_outlier(nb_neighbors=30, std_ratio=0.8)
+    cl, ind = downsample_pcd.remove_statistical_outlier(nb_neighbors=sor_nb_neighbors, std_ratio=sor_std_ratio)
     sor_pcd = downsample_pcd.select_by_index(ind)
 
     # Radius Outlier Removal (ROR) 적용
-    cl, ind = sor_pcd.remove_radius_outlier(nb_points=10, radius=0.8)
+    cl, ind = sor_pcd.remove_radius_outlier(nb_points=ror_nb_points, radius=ror_radius)
     ror_pcd = sor_pcd.select_by_index(ind)
     
     
