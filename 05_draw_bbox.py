@@ -14,16 +14,21 @@ voxel_size = 0.2  # 필요에 따라 voxel 크기를 조정하세요.
 downsample_pcd = original_pcd.voxel_down_sample(voxel_size=voxel_size)
 
 # Radius Outlier Removal (ROR) 적용
-cl, ind = downsample_pcd.remove_radius_outlier(nb_points=6, radius=1.2)
-ror_pcd = downsample_pcd.select_by_index(ind)
+# cl, ind = downsample_pcd.remove_radius_outlier(nb_points=6, radius=1.2)
+# ror_pcd = downsample_pcd.select_by_index(ind)
+
+# Statistical Outlier Removal (SOR) 적용
+cl, ind = downsample_pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=1.0)
+sor_pcd = downsample_pcd.select_by_index(ind)
+
 
 # RANSAC을 사용하여 평면 추정
-plane_model, inliers = ror_pcd.segment_plane(distance_threshold=0.1,
+plane_model, inliers = sor_pcd.segment_plane(distance_threshold=0.1,
                                              ransac_n=3,
                                              num_iterations=2000)
 
 # 도로에 속하지 않는 포인트 (outliers) 추출
-final_point = ror_pcd.select_by_index(inliers, invert=True)
+final_point = sor_pcd.select_by_index(inliers, invert=True)
 
 # 포인트 클라우드를 NumPy 배열로 변환
 points = np.asarray(final_point.points)
