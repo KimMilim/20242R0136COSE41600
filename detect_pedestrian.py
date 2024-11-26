@@ -3,6 +3,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import cv2
+from joblib import Parallel, delayed
+
+# ROR SOR 병렬 처리
+def remove_outliers_parallel(pcd, method, **kwargs):
+    if method == "SOR":
+        cl, ind = pcd.remove_statistical_outlier(**kwargs)
+    elif method == "ROR":
+        cl, ind = pcd.remove_radius_outlier(**kwargs)
+    return pcd.select_by_index(ind)
+
 
 # PCD 파일이 저장된 디렉토리 경로
 #pcd_dir = "data/01_straight_walk/pcd/"
@@ -27,9 +37,6 @@ for file_path in pcd_files:
     # PCD 파일 읽기
     original_pcd = o3d.io.read_point_cloud(file_path)
     
-    # Voxel Downsampling
-    downsample_pcd = original_pcd.voxel_down_sample(voxel_size=voxel_size)
-    
     # 밀도 기반으로 SOR 및 ROR 매개변수 동적 설정
     avg_density = len(original_pcd.points) / original_pcd.get_axis_aligned_bounding_box().volume()
 
@@ -41,13 +48,12 @@ for file_path in pcd_files:
     ror_nb_points = max(5, int(avg_density * 3))
     ror_radius = 1.0 if avg_density > 0.1 else 0.8
 
-    # Statistical Outlier Removal (SOR) 적용
-    cl, ind = downsample_pcd.remove_statistical_outlier(nb_neighbors=sor_nb_neighbors, std_ratio=sor_std_ratio)
-    sor_pcd = downsample_pcd.select_by_index(ind)
-
-    # Radius Outlier Removal (ROR) 적용
-    cl, ind = sor_pcd.remove_radius_outlier(nb_points=ror_nb_points, radius=ror_radius)
-    ror_pcd = sor_pcd.select_by_index(ind)
+    # Voxel Downsampling
+    downsample_pcd = original_pcd.voxel_down_sample(voxel_size=voxel_size)
+    
+    # 병렬 SOR ROR
+    sor_pcd = remove_outliers_parallel(downsample_pcd, method="SOR", nb_neighbors=sor_nb_neighbors, std_ratio=sor_std_ratio)
+    ror_pcd = remove_outliers_parallel(sor_pcd, method="ROR", nb_points=ror_nb_points, radius=ror_radius)
     
     
     # RANSAC으로 평면 추출
