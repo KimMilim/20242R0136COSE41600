@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import os
 import cv2
 import argparse
+import time
 
 # ROR SOR 
 def remove_outliers_sor_ror(pcd, method, **kwargs):
@@ -13,43 +14,64 @@ def remove_outliers_sor_ror(pcd, method, **kwargs):
         cl, ind = pcd.remove_radius_outlier(**kwargs)
     return pcd.select_by_index(ind)
 
-def visualize_point_clouds(pcd_list, window_name="Point Cloud Visualization", point_size=1.0):
+def visualize_with_bounding_boxes(pcd, bounding_boxes, window_name="Filtered Clusters and Bounding Boxes", point_size=1.0):
     vis = o3d.visualization.Visualizer()
-    vis.create_window(window_name=window_name)
-    for pcd in pcd_list:
-        vis.add_geometry(pcd)
+    vis.create_window(window_name=window_name,width=1200, height=800)
+    vis.clear_geometries()
+    vis.add_geometry(pcd)
+    for bbox in bounding_boxes:
+        vis.add_geometry(bbox)
     vis.get_render_option().point_size = point_size
     vis.run()
     vis.destroy_window()
 
-def visualize_with_bounding_boxes(pcd, bounding_boxes, window_name="Filtered Clusters and Bounding Boxes", point_size=1.0):
+def capture_pcd_and_bboxes(pcd, bboxes, file_name):
     vis = o3d.visualization.Visualizer()
-    vis.create_window(window_name=window_name)
-    vis.add_geometry(pcd)
-    for bbox in bounding_boxes:
-        vis.add_geometry(bbox)
-    vis.get_render_option().point_size = point_size
-    vis.run()
-    vis.destroy_window()
+    vis.create_window(visible=True,window_name="Point Cloud",width=1200, height=800)
     
-def capture_and_visualize_pcd(pcd, bounding_boxes, file_name, point_size=0.5, zoom_factor=0.8):
-    vis = o3d.visualization.Visualizer()
-    vis.create_window(window_name="Point Cloud")
-    vis.add_geometry(pcd)
-    for bbox in bounding_boxes:
-        vis.add_geometry(bbox)
+    lookat = np.array([-10,0, 20])  # 카메라가 바라볼 중심
+    front = np.array([0, -1, 1])  # 카메라의 앞 방향 (z 축 음수 방향)
+    up = np.array([0, 1, 0])      # 카메라의 위 방향 (y 축 방향)
+    zoom = 0.2
     
-    vis.get_render_option().point_size = point_size
+    vis.add_geometry(pcd)
+    for bbox in bboxes:
+        vis.add_geometry(bbox)
+
+    vis.get_render_option().point_size = 0.1
     ctr = vis.get_view_control()
-    ctr.set_zoom(zoom_factor)  
+    ctr.set_lookat(lookat)
+    ctr.set_front(front)
+    ctr.set_up(up)
+    ctr.set_zoom(zoom)
     
+    # vis.run()
+    # 시각화 및 캡쳐
     vis.poll_events()
     vis.update_renderer()
     vis.capture_screen_image(file_name) 
+    print(f"capture {file_name}")
     vis.destroy_window()
+    
+def create_video_from_images(frame_files, output_file, frame_rate=5):
+    if not frame_files:
+        print("No frames to create video.")
+        return
 
-    
-    
+    # 첫 번째 이미지를 읽어와서 영상 크기 결정
+    temp_image = cv2.imread(frame_files[0])
+    frame_size = (temp_image.shape[1], temp_image.shape[0])
+
+    # 동영상 생성기 초기화
+    video_writer = cv2.VideoWriter(output_file, cv2.VideoWriter_fourcc(*"mp4v"), frame_rate, frame_size)
+
+    for frame_file in frame_files:
+        frame = cv2.imread(frame_file)
+        video_writer.write(frame)
+
+    video_writer.release()
+    print(f"Video saved as {output_file}")
+
 # 경로 입력 받아 파싱
 parser = argparse.ArgumentParser()
 parser.add_argument('--data_dir', type=str, required=True)
@@ -67,8 +89,7 @@ if not os.path.exists(pcd_dir):
 
 # PCD 파일 리스트 생성
 pcd_files = [os.path.join(pcd_dir, f) for f in os.listdir(pcd_dir) if f.endswith('.pcd')]
-results = []
-
+frame_files= []
 for file_path in pcd_files:
     print(f"Processing: {file_path}")
     # PCD 파일 읽기
@@ -171,44 +192,19 @@ for file_path in pcd_files:
                                 bbox.color = (1, 0, 0)
                                 bboxes.append(bbox)
                                 # Z축 범위 출력
-                                # print(f"Cluster {i}: z_min = {z_min:.2f}, z_max = {z_max:.2f}, z_diff = {z_max-z_min:.2f}")
-
+                                # print(f"Cluster {i}: z_min = {z_min:.2f}, z_max = {z_max:.2f}, z_diff = {z_max-z_min:.2f}")   
+        
+    file_name, _ = os.path.splitext(file_path)
+    prefix, suffix = file_name.split("pcd_")
     
-    # 시각화
-    # visualize_with_bounding_boxes(final_point, bboxes, point_size=1.0)
-    
-    # 처리 결과 저장
-    results.append((file_path, final_point, bboxes))
+    # 경로 확인 및 디렉토리 생성
+    capture_dir = prefix+"captures/"
+    if not os.path.exists(capture_dir):
+        os.makedirs(capture_dir)
+    capture_pcd_and_bboxes(final_point, bboxes, capture_dir+"cap_"+suffix+".png")
+    frame_files.append(capture_dir+"cap_"+suffix+".png")
 
-
-# 캡처된 이미지를 저장할 디렉토리
-output_dir = "output_frames"
-os.makedirs(output_dir, exist_ok=True)
-
-# 각 파일의 결과를 캡처
-frame_files = []
-for idx, (file_path, final_point, bboxes) in enumerate(results):
-    frame_file = os.path.join(output_dir, f"frame_{idx:03d}.png")
-    print(f"Capturing: {frame_file}")
-    capture_and_visualize_pcd(final_point, bboxes, frame_file, point_size=1.0)
-    frame_files.append(frame_file)
-
+     
 
 video_file = senario_name+"_output_video.mp4"
-frame_rate = 5  # 초당 프레임 수 
-frame_size = None
-
-if frame_files:
-    temp_image = cv2.imread(frame_files[0])
-    frame_size = (temp_image.shape[1], temp_image.shape[0])
-
-if frame_size:
-    # 동영상 생성기 초기화
-    video_writer = cv2.VideoWriter(video_file, cv2.VideoWriter_fourcc(*"mp4v"), frame_rate, frame_size)
-
-    for frame_file in frame_files:
-        frame = cv2.imread(frame_file)
-        video_writer.write(frame)
-
-    video_writer.release()
-    print(f"Video saved as {video_file}")
+create_video_from_images(frame_files, video_file, frame_rate=5)
