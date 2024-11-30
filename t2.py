@@ -133,8 +133,8 @@ data_dir = args.data_dir
 senario_name = args.scenario
 # data_dir="data/"
 # senario_name = "01_straight_walk"
-# pcd_dir = os.path.join(data_dir, senario_name, "pcd/")
-pcd_dir = os.path.join(data_dir, senario_name, "pcdback/")
+pcd_dir = os.path.join(data_dir, senario_name, "pcd/")
+# pcd_dir = os.path.join(data_dir, senario_name, "pcdback/")
 
 
 # 디렉토리 확인
@@ -199,14 +199,15 @@ for file_path in pcd_files:
  
     # 필터링 조건
     min_points_in_cluster = 10
-    min_y_value = -0.5 # y좌표 (height)
+    min_y_value = -0.5
     max_y_value = 100
-    min_height = 0.1
-    max_height = 1.0 
+    
     max_x_diff = 15.0
-    max_z_diff=20.0
+    max_z_diff = 1.6
+    min_z_diff = 0.255
     max_y_diff = 1.0
-    min_distance = 1.0
+    
+    min_zx_ratio = 0.05
     
     
     # 조건에 따라 바운딩 박스 생성
@@ -216,12 +217,10 @@ for file_path in pcd_files:
         cluster_indices = np.where(labels == i)[0]
         if min_points_in_cluster <= len(cluster_indices):
             cluster_pcd = final_point.select_by_index(cluster_indices)
-            points = np.asarray(cluster_pcd.points) # x: points[:, 0], y: points[:, 1], z(왼손좌표Z): points[:, 2]
+            points = np.asarray(cluster_pcd.points) 
             
             # 높이 필터링(y)
-            y_values = points[:, 1] 
-            y_min = y_values.min()
-            y_max = y_values.max()
+            y_min,y_max = points[:, 1].min(),points[:, 1].max() 
             y_diff=abs(y_max-y_min)
             
             if min_y_value <= y_min and y_max <= max_y_value:
@@ -231,92 +230,50 @@ for file_path in pcd_files:
                 z_min, z_max = points[:, 2].min(), points[:, 2].max()
                 z_diff = abs(z_max-z_min)    
                      
-                if max_x_diff < x_diff or max_z_diff < z_diff:# or max_height < height_diff: 
+                if max_x_diff < x_diff:
                     continue  
                 if max_y_diff < y_diff:
                     continue  
-                if z_diff < 0.255 or 1.6 < z_diff:
+                if z_diff < min_z_diff or max_z_diff < z_diff:
                     continue
                 
-                z_x_ratio = z_diff/x_diff
-                z_y_ratio = z_diff/y_diff
-                if z_x_ratio < 0.05:# or z_y_ratio < 2.0:
+                zx_ratio = z_diff/x_diff
+                if zx_ratio < min_zx_ratio:
                     continue
-                # bbox = cluster_pcd.get_axis_aligned_bounding_box()
-                # bbox.color = (1, 0, 0)
-                # bboxes.append(bbox)
-                # bbox_array=np.asarray(bbox)
-                # print(f"bbox_array={bbox_array}")
                 
                 centroid = get_centroid(cluster_pcd) #i-th cluster의 중심
                 cur_pcd_centroids.append([cluster_pcd,centroid])
                 # print(f"centroid={centroid}")
-                
-                # print(f"x_min, x_max={x_min},{x_max}")
-                # print(f"x_diff={x_diff}")
-                # print(f"z_min, z_max={z_min},{z_max}")
-                # print(f"z_diff={z_diff}")
-                # print(f"y_min, y_max={y_min},{y_max}")
-                # print(f"y_diff={y_diff}")
-                
-                # object_check(final_point, bbox, file_path)
-                
-                
-                            
-    # 000X의 pcd의 조건필터링 후 50~70개 중심이 cur_centroids에 저장                                         
-    # print(f"cur_centroids cnt ={len(cur_centroids)}")            
     
-    max_distance=-1.0
-    min_distance=100.0
-    if 30 <= len(all_pcd_centroids):
+    if 40 <= len(all_pcd_centroids):
         
         for pcd, centroid in cur_pcd_centroids: # 현재 pcd의 필터한 거에 클러스터 하나씩 확인
             ped = True
             
-            compare_pcd_centorids = all_pcd_centroids[-30]
-            
-            for j in range(len(compare_pcd_centorids)):
-                pre_pcd, pre_centroid = compare_pcd_centorids[j]
-                distance = get_distance(pre_centroid,centroid)
-                # print(f"distance={distance}")
-                # cur_bbox = pcd.get_axis_aligned_bounding_box()
-                # pre_bbox = pre_pcd.get_axis_aligned_bounding_box()  
-                # distance = calculate_distance_between_bboxes_vertices(cur_bbox, pre_bbox)
+            compares_pcd_centorids = all_pcd_centroids[-40:-19][::-1]
+            for compare_pcd_centorids in compares_pcd_centorids: #30~40번째 전 좌표를 모두 탐색
                 
-                # 시나리오 1,3은 1.2도 가능
-                if distance < 1.2: # 보행자 아님 정지물체임 0.4 -> 0.7 -> 0.9 -> 1.0
-                    ped=False
-                    break
-            if distance > 50: #here 10 ~50 # 50
-                continue            
+                for j in range(len(compare_pcd_centorids)):# 30번 전부터 탐색
+                    pre_pcd, pre_centroid = compare_pcd_centorids[j]
+                    distance = get_distance(pre_centroid,centroid)
+                
+        
+                    if distance < 1.2: # 보행자 아님 정지물체임 
+                        ped=False
+                        break
+                if ped==False:
+                    break    
+                if distance > 50: #here 10 ~50 # 50
+                    continue            
             if ped: #보행자이면
                 bbox = pcd.get_axis_aligned_bounding_box()
                 bbox.color = (1, 0, 0)
-                bboxes.append(bbox)   
-                #print(f"distance={distance}")   
-                if min_distance > distance:
-                    min_distance=distance
-                if max_distance < distance:
-                    max_distance=distance    
-                          
+                bboxes.append(bbox)              
     
     all_pcd_centroids.append(cur_pcd_centroids)    
-             
-                    
-                # bbox = cluster_pcd.get_axis_aligned_bounding_box()
-                # bbox.color = (1, 0, 0)
-                # bboxes.append(bbox)
-                # print(f"height_diff={height_diff}, x_diff={x_diff}, z_diff={z_diff}")
-                # print(f"ratio(키/몸통min)={height_diff/min(x_diff,z_diff):.2f}")
-                # print(f"y_min={y_min:.2f}, y_max={y_max:.2f}")
-                        # object_check(final_point, bbox, file_path)
-                    
-                    
-                    
                 
     
-    print(f"bboxes cnt = {len(bboxes)}")    
-    print(f"min_dis={min_distance},max_dis={max_distance}")
+    #print(f"bboxes cnt = {len(bboxes)}")    
     file_name, _ = os.path.splitext(file_path)
     prefix, suffix = file_name.split("pcd_")
     
@@ -326,7 +283,6 @@ for file_path in pcd_files:
         os.makedirs(capture_dir)
     capture_pcd_and_bboxes(final_point, bboxes, capture_dir+"cap_"+suffix+".png")
     frame_files.append(capture_dir+"cap_"+suffix+".png")
-
      
 
 video_file = senario_name+"_output_video.mp4"
