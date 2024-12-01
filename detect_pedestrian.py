@@ -53,6 +53,33 @@ def capture_pcd_and_bboxes(pcd, bboxes, file_name):
     print(f"capture {file_name}")
     vis.destroy_window()
     
+def object_check(pcd, bbox, file_name):
+    vis = o3d.visualization.Visualizer()
+    vis.create_window(visible=True,window_name="Point Cloud",width=1200, height=800)
+    
+    lookat = np.array([-10,0, 20])  # 카메라가 바라볼 중심
+    front = np.array([0, -1, 1])  # 카메라의 앞 방향 (z 축 음수 방향)
+    up = np.array([0, 1, 0])      # 카메라의 위 방향 (y 축 방향)
+    zoom = 0.2
+    
+    vis.add_geometry(pcd)
+    vis.add_geometry(bbox)
+
+    vis.get_render_option().point_size = 0.1
+    ctr = vis.get_view_control()
+    ctr.set_lookat(lookat)
+    ctr.set_front(front)
+    ctr.set_up(up)
+    ctr.set_zoom(zoom)
+    
+    vis.run()
+    # 시각화 및 캡쳐
+    vis.poll_events()
+    vis.update_renderer()
+    #vis.capture_screen_image(file_name) 
+    print(f"object check {file_name}")
+    vis.destroy_window()
+    
 def create_video_from_images(frame_files, output_file, frame_rate=5):
     if not frame_files:
         print("No frames to create video.")
@@ -71,6 +98,14 @@ def create_video_from_images(frame_files, output_file, frame_rate=5):
 
     video_writer.release()
     print(f"Video saved as {output_file}")
+    
+    
+def get_centroid(pcd):
+    points = np.asarray(pcd.points)
+    return np.mean(points, axis=0)  
+ 
+def get_distance(p1, p2):
+    return np.linalg.norm(p1 - p2)
 
 # 경로 입력 받아 파싱
 parser = argparse.ArgumentParser()
@@ -81,7 +116,11 @@ args = parser.parse_args()
 # PCD 파일이 저장된 디렉토리 경로
 data_dir = args.data_dir
 senario_name = args.scenario
+# data_dir="data/"
+# senario_name = "01_straight_walk"
 pcd_dir = os.path.join(data_dir, senario_name, "pcd/")
+# pcd_dir = os.path.join(data_dir, senario_name, "pcdback/")
+
 
 # 디렉토리 확인
 if not os.path.exists(pcd_dir):
@@ -90,6 +129,7 @@ if not os.path.exists(pcd_dir):
 # PCD 파일 리스트 생성
 pcd_files = [os.path.join(pcd_dir, f) for f in os.listdir(pcd_dir) if f.endswith('.pcd')]
 frame_files= []
+all_pcd_centroids = []
 for file_path in pcd_files:
     print(f"Processing: {file_path}")
     # PCD 파일 읽기
@@ -100,7 +140,6 @@ for file_path in pcd_files:
     
     # 밀도 기반으로 SOR 및 ROR 매개변수 동적 설정
     avg_density = len(original_pcd.points) / original_pcd.get_axis_aligned_bounding_box().volume()
-    # print(f"avg_density={avg_density:.2f}")
     
     # SOR ROR 매개변수 조정
     if avg_density < 1.5:  # 밀도가 낮을 경우
@@ -113,12 +152,7 @@ for file_path in pcd_files:
         sor_std_ratio = 1.0
         ror_nb_points = max(5, int(avg_density * 3))
         ror_radius = 1.0
-    
-    # print(f"sor_nb_neighbors = {sor_nb_neighbors:.2f},sor_std_ratio = {sor_std_ratio:.2f}")
-    # print(f"ror_nb_points = {ror_nb_points:.2f},ror_radius = {ror_radius:.2f}")
-    
-    #visualize_point_clouds([downsample_pcd])
-    
+
     # SOR ROR
     sor_pcd = remove_outliers_sor_ror(downsample_pcd, method="SOR", nb_neighbors=sor_nb_neighbors, std_ratio=sor_std_ratio)
     ror_pcd = remove_outliers_sor_ror(sor_pcd, method="ROR", nb_points= ror_nb_points, radius=ror_radius)
@@ -127,14 +161,12 @@ for file_path in pcd_files:
     plane_model, inliers = ror_pcd.segment_plane(distance_threshold=0.1, ransac_n=3, num_iterations=1000) # n=10
     final_point = ror_pcd.select_by_index(inliers, invert=True)
     
-     
     # 밀도를 기반으로 최소 포인트 설정
     avg_density = len(final_point.points) / final_point.get_axis_aligned_bounding_box().volume()
     min_points = min(10, int(avg_density * 10))
-    # print(f"final_avg_den={avg_density}, min_points={min_points}")
     
-    # DBSCAN 클러스터링
-    labels = np.array(final_point.cluster_dbscan(eps=0.37, min_points=min_points, print_progress=True)) 
+    # DBSCAN 클러스터링                          eps=0.3이 제일 잘 됐음 시나리오 1,3
+    labels = np.array(final_point.cluster_dbscan(eps=0.15, min_points=min_points, print_progress=True)) 
     max_label = labels.max()
     # print(f"Point cloud has {max_label + 1} clusters")
 
@@ -143,57 +175,86 @@ for file_path in pcd_files:
     final_point.colors = o3d.utility.Vector3dVector(colors[:,:3])
  
     # 필터링 조건
-    min_points_in_cluster = 10
-    max_points_in_cluster = 120 
-    min_z_value = -1.5
-    max_z_value = 1.0
-    min_height = 0.1
-    max_height = 1.0
-    max_distance = 200.0
-    min_width = 0.03  # 최소 가로 길이  
-    max_width = 1.0  # 최대 가로 길이  
-    min_aspect_ratio = 2.0  # 최소 z/max(x,y) 비율
-    max_aspect_ratio = 5.0  # 최대 z/max(x,y) 비율 
+    min_points_in_cluster = 6 # 10 -> 6
+    min_y_value = -0.5 # -0.5 -> -1.5 -> -1.0 -> -0.5
+    max_y_value = 100
+    
+    max_x_diff = 15.0 # 15.0 -> 20.0 ->15.0
+    max_z_diff = 2.0 # 1.6 -> 2.0
+    min_z_diff = 0.2 # 0.255 -> 0.2
+    max_y_diff = 1.5 # 1.0 -> 1.2 -> 1.5 -> 2.5 -> 1.5
+    
     
     # 조건에 따라 바운딩 박스 생성
     bboxes = []
-    for i in range(max_label + 1):
+    cur_pcd_centroids = []
+    for i in range(max_label + 1): #300~600개 
         cluster_indices = np.where(labels == i)[0]
-        if min_points_in_cluster <= len(cluster_indices) <= max_points_in_cluster:
+        if min_points_in_cluster <= len(cluster_indices):
             cluster_pcd = final_point.select_by_index(cluster_indices)
-            points = np.asarray(cluster_pcd.points)
+            points = np.asarray(cluster_pcd.points) 
             
-            # 높이 필터링
-            z_values = points[:, 2]
-            z_min = z_values.min()
-            z_max = z_values.max()
-            if min_z_value <= z_min and z_max <= max_z_value:
-                height_diff = z_max - z_min
-                if min_height <= height_diff <= max_height:
+            # 높이 필터링(y)
+            y_min,y_max = points[:, 1].min(),points[:, 1].max() 
+            y_diff=abs(y_max-y_min)
+            
+            if min_y_value <= y_min and y_max <= max_y_value:
                     
-                     # x, y 값의 범위 계산 (가로 길이)
-                    x_min, x_max = points[:, 0].min(), points[:, 0].max()
-                    y_min, y_max = points[:, 1].min(), points[:, 1].max()
-                    width_x = x_max - x_min
-                    width_y = y_max - y_min
-                    
-                    if height_diff <= max(width_x,width_y):
-                        continue
-
-                    # 가로 길이와 비율 조건 추가
-                    if min_width <= width_x <= max_width and min_width <= width_y <= max_width:
-                        aspect_ratio = height_diff / max(width_x, width_y)  # 비율 계산 
-                        if min_aspect_ratio <= aspect_ratio and aspect_ratio <=  max_aspect_ratio:  # 비율 조건 확인
-                        
-                            # 거리 조건 필터링
-                            distances = np.linalg.norm(points, axis=1)
-                            if distances.max() <= max_distance:
-                                bbox = cluster_pcd.get_axis_aligned_bounding_box()
-                                bbox.color = (1, 0, 0)
-                                bboxes.append(bbox)
-                                # Z축 범위 출력
-                                # print(f"Cluster {i}: z_min = {z_min:.2f}, z_max = {z_max:.2f}, z_diff = {z_max-z_min:.2f}")   
+                x_min, x_max = points[:, 0].min(), points[:, 0].max()
+                x_diff = abs(x_max-x_min)*10
+                z_min, z_max = points[:, 2].min(), points[:, 2].max()
+                z_diff = abs(z_max-z_min)    
+                     
+                if max_x_diff < x_diff:
+                    continue  
+                if max_y_diff < y_diff:
+                    continue  
+                if z_diff < min_z_diff or max_z_diff < z_diff:
+                    continue
+                
+                centroid = get_centroid(cluster_pcd) #i-th cluster의 중심
+                cur_pcd_centroids.append([cluster_pcd,centroid])
+                
+                # bbox = cluster_pcd.get_axis_aligned_bounding_box()
+                # bbox.color = (1, 0, 0)
+                # #bboxes.append(bbox) 
+                # print(f"x_diff={x_diff},y_diff={y_diff},z_diff={z_diff}")
+                # print(f"y_min={y_min}, y_max={y_max}, z_min={z_min}, z_max = {z_max} ")
+                # object_check(final_point, bbox, "file_name")
+                # print(f"centroid={centroid}")
+    
+    min_distance=0.8 # 1.2 ->1.0 -> 0.8
+    max_distance=50
+    if 40 <= len(all_pcd_centroids):
+        all_pcd_centroids = all_pcd_centroids[-40:]
         
+        for pcd, centroid in cur_pcd_centroids: # 현재 pcd의 필터한 거에 클러스터 하나씩 확인
+            ped = True
+            
+            compares_pcd_centorids = all_pcd_centroids[-40:-19][::-1]
+            for compare_pcd_centorids in compares_pcd_centorids: #20~40번째 전 좌표를 모두 탐색
+                
+                for j in range(len(compare_pcd_centorids)):# 20번 전부터 탐색
+                    pre_pcd, pre_centroid = compare_pcd_centorids[j]
+                    distance = get_distance(pre_centroid,centroid)
+                
+        
+                    if distance < min_distance: # 보행자 아님 정지물체임 
+                        ped=False
+                        break
+                if ped==False:
+                    break    
+                if distance > max_distance: 
+                    continue            
+            if ped: #보행자이면
+                bbox = pcd.get_axis_aligned_bounding_box()
+                bbox.color = (1, 0, 0)
+                bboxes.append(bbox)              
+    
+    all_pcd_centroids.append(cur_pcd_centroids)    
+                
+    
+    #print(f"bboxes cnt = {len(bboxes)}")    
     file_name, _ = os.path.splitext(file_path)
     prefix, suffix = file_name.split("pcd_")
     
@@ -203,8 +264,7 @@ for file_path in pcd_files:
         os.makedirs(capture_dir)
     capture_pcd_and_bboxes(final_point, bboxes, capture_dir+"cap_"+suffix+".png")
     frame_files.append(capture_dir+"cap_"+suffix+".png")
-
      
 
-video_file = senario_name+"_output_video.mp4"
+video_file = senario_name+"_output_vide.mp4"
 create_video_from_images(frame_files, video_file, frame_rate=5)
